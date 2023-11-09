@@ -1,4 +1,5 @@
 import torch
+import torchvision
 import os
 import cv2
 import numpy as np
@@ -7,12 +8,13 @@ import matplotlib.pyplot as plt
 DATASET_PATH = 'PetImages/'
 CAT_PATH = os.path.join(DATASET_PATH, 'Cat/')
 DOG_PATH = os.path.join(DATASET_PATH, 'Dog/')
-MAX_IMAGES = 10000
-RESIZE_W = 128
-RESIZE_H = 128
+MAX_IMAGES = 1000
+RESIZE_W = 224 #128
+RESIZE_H = 224 #128
 TRAIN_COUNT = MAX_IMAGES * 80 // 100
 BATCH_SIZE = 10
-LEANING_RATE = 0.001
+LEARNING_RATE = 0.001
+PATH_SAVED = "best_0.0123"
 
 # Считываем пути изображений в папке folder_path
 def readImageNames(folder_path):
@@ -119,7 +121,7 @@ class MyNet(torch.nn.Module):
         #   stride - шаг окна свёрктки,
         #   padding - заполнения нулями по краям
         #       был (3x128х128), стал (64x30х30)
-        #       30х30 - посчитали по формуле,
+        #       31х31 - посчитали по формуле,
         #   num_out_channels, kernel_size, stride, padding - берём произвольно
         num_out_channels = 64 # так захотели
         self.conv1 = torch.nn.Conv2d(num_chanels, num_out_channels, 
@@ -149,6 +151,60 @@ class MyNet(torch.nn.Module):
         # возвращаем итоговый тензор
         return x
 
+class AlexNet(torch.nn.Module):
+    def __init__(self, num_classes : int = 2, num_chanels : int = 3) -> None:
+        super().__init__()
+        self.features = torch.nn.Sequential(
+            #224 224 3
+            torch.nn.Conv2d(in_channels=num_chanels, out_channels=96, 
+                            kernel_size=11, stride=4, padding=0),
+            torch.nn.ReLU(inplace=True),
+            #54 54 96
+            torch.nn.MaxPool2d(kernel_size=3, stride=2),
+            #26 26 96
+            torch.nn.Conv2d(in_channels=96, out_channels=256, 
+                            kernel_size=5, padding=2),
+            torch.nn.ReLU(inplace=True),
+            #26 26 256
+            torch.nn.MaxPool2d(kernel_size=3, stride=2),
+            #12 12 256
+            torch.nn.Conv2d(in_channels=256, out_channels=384, 
+                            kernel_size=3, padding=1),
+            torch.nn.ReLU(inplace=True),
+            #12 12 384
+            torch.nn.Conv2d(in_channels=384, out_channels=384, 
+                            kernel_size=3, padding=1),
+            torch.nn.ReLU(inplace=True),
+            #12 12 384
+            torch.nn.Conv2d(in_channels=384, out_channels=256, 
+                            kernel_size=3, padding=1),
+            torch.nn.ReLU(inplace=True),
+            #12 12 256
+            torch.nn.MaxPool2d(kernel_size=3, stride=2),
+            #5 5 256
+            )
+        self.classifier = torch.nn.Sequential(
+            # Dropout помогает при переобучении
+            torch.nn.Dropout(p=0.5), #p=0.5 по умолчанию, можно просто пустые
+            torch.nn.Linear(5 * 5 * 256, 4096),
+            torch.nn.ReLU(inplace=True),
+
+            torch.nn.Dropout(p=0.5),
+            torch.nn.Linear(4096, 4096),
+            torch.nn.ReLU(inplace=True),
+
+            torch.nn.Linear(4096, num_classes),
+            )
+
+    def forward(self, x : torch.Tensor) -> torch.Tensor:
+        x = self.features(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+# Pytorcheвский AlexNet
+#torchvision.models.AlexNet
+
 # Cоздаём dataloder
 train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=BATCH_SIZE,
@@ -157,11 +213,15 @@ test_dataloader = torch.utils.data.DataLoader(test_dataset,
                                                batch_size=BATCH_SIZE,
                                                shuffle=False)
 # Cоздаём объект сети
-model = MyNet()
+#model = MyNet()
+model = AlexNet()
+# Чтобы загрузить модель
+# model = torch.load(PATH_SAVED)
+
 # Cоздаём loss функцию
 criterion = torch.nn.CrossEntropyLoss()
 # Cоздаём оптимизатор, для градиентных шагов, который будет обучать нашу сеть
-optimizer = torch.optim.Adam(model.parameters(), lr=LEANING_RATE)
+optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 # Функция для вычисления loss на тестовом множестве
 def eval_test_metrics(dataloader):
@@ -220,5 +280,9 @@ def train_net():
         test_loss, test_accuracy = eval_test_metrics(test_dataloader)
         print(f"epoch={epoch}, train_loss={train_loss}, train_accuracy={accuracy}\
         test_loss={test_loss}, test_accuracy={test_accuracy}")
+
+        if test_accuracy > best_test_acc:
+            best_test_acc = test_accuracy
+            torch.save(model,"best_" + str(test_accuracy))
 
 train_net()
