@@ -202,8 +202,102 @@ class AlexNet(torch.nn.Module):
         x = self.classifier(x)
         return x
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride = 1, 
+                 downsample = None):
+        super().__init__()
+        self.downsample = downsample
+        #1: 56 56 64
+        #2: 56 56 128
+        self.conv1 = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                          stride=stride, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True)
+            )
+        #1: 56 56 64
+        #2: 28 28 128
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, kernel_size=3,
+                          stride=1, padding=1),
+            nn.BatchNorm2d(out_channels)
+            )
+        #1: 56 56 64
+        #2: 28 28 128
+        self.relu = nn.ReLU()
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        #2: x[56 56 64]
+        in_x = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+        if self.downsample:
+            in_x = self.downsample(in_x)
+        #2: out[28 28 128]
+        #2: x[28 28 128]
+        out += in_x
+
+        out = self.relu(out)
+        return out
+
+class ResNet(nn.Module):
+    def __init__(self, block, layers, in_channels=3, num_classes=2):
+        super().__init__()
+        self.inplanes = 64
+        #224 224 3
+        self.conv1 = nn.Sequential(
+                nn.Conv2d(in_channels, self.inplanes, kernel_size=7, 
+                          stride=2, padding=3),
+                nn.BatchNorm2d(self.inplanes),
+                nn.ReLU(inplace=True),
+            )
+        #112 112 64
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        #56 56 64
+        self.layer0 = self.make_residual_layer(block, 64, layers[0], stride=1)
+        #56 56 64
+        self.layer1 = self.make_residual_layer(block, 128, layers[1], stride=2)
+        #28 28 64
+        self.layer2 = self.make_residual_layer(block, 256, layers[2], stride=2)
+        self.layer3 = self.make_residual_layer(block, 512, layers[3], stride=2)
+        self.avgpool = nn.AvgPool2d(7, stride=1)
+        self.fc = nn.Linear(512, num_classes)
+
+    def make_residual_layer(self, block, out_chennels, n_blocks, stride=1):
+        downsample = None
+        if stide != 1 or self.inplanes != out_chennels:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, out_chennels, kernel_size=1,
+                          stride=stride),
+                nn.BatchNorm2d(out_chennels),
+                )
+        layers = []
+        layers.append(block(self.inplanes, out_chennels, stride, downsample))
+        self.inplanes = out_chennels
+        for _ in range(1, n_blocks):
+            layers.append(block(self.inplanes, out_chennels, 1, downsample))
+        return nn.Sequential(*layers)
+
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.maxpool(x)
+        x = self.layer0(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.avgpool(x)
+        #x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
 # Pytorcheвский AlexNet
 #torchvision.models.AlexNet
+
+# Pytorcheвский AlexNet
+#torchvision.models.ResNet
 
 # Cоздаём dataloder
 train_dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -214,7 +308,8 @@ test_dataloader = torch.utils.data.DataLoader(test_dataset,
                                                shuffle=False)
 # Cоздаём объект сети
 #model = MyNet()
-model = AlexNet()
+#model = AlexNet()
+model = ResNet(ResidualBlock, [2, 2, 2, 2])
 # Чтобы загрузить модель
 # model = torch.load(PATH_SAVED)
 
