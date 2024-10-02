@@ -1,6 +1,6 @@
 **/.venv
 **/__pycache__
-/corpora
-/tokenizers
+**/corpora
+**/tokenizers
 **/data
 **/params.json
