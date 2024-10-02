@@ -10,7 +10,7 @@ import pickle
 import torch
 import json
 
-k_word_to_vec_path = '02 - word2vec'
+word_to_vec_path = '02 - word2vec'
 
 class PickleInfo:
     def __init__(self) -> None:
@@ -22,7 +22,7 @@ class PickleInfo:
         self.save_word2vec = True
         self.load_classifier = True
         self.save_classifier = True
-        self.data_path = os.path.join(os.curdir, k_word_to_vec_path, 'data') #Сюда будем сувать pickle
+        self.data_path = os.path.join(os.curdir, word_to_vec_path, 'data') #Сюда будем сувать pickle
         if not os.path.exists(self.data_path):
             os.mkdir(self.data_path)
         self.processed_documents_filename = os.path.join(self.data_path, 'processed_documents.pickle')
@@ -95,7 +95,7 @@ def main(my_params):
     classifier_train_number_of_epochs = my_params['Classifier train number of epochs']
     classifier_train_batch_size = my_params['Classifier train batch size']
     classifier_train_learning_rate = my_params['Classifier train learning rate']
-    inference_filename = os.path.join(k_word_to_vec_path, my_params['Inference filename'])
+    inference_filename = os.path.join(word_to_vec_path, my_params['Inference filename'])
     # Документы
     if info.load_processed_documents and os.path.exists(info.processed_documents_filename):
         documents = load_processed_documents(info)
@@ -203,7 +203,9 @@ def main(my_params):
         print('Не могу найти путь:', inference_filename)
 
 if __name__ == '__main__':
-    params_path = os.path.join(os.curdir, k_word_to_vec_path, 'params.json')
+    if os.path.abspath(os.curdir).endswith(word_to_vec_path):
+        word_to_vec_path = '.'
+    params_path = os.path.join(os.curdir, word_to_vec_path, 'params.json')
     if os.path.exists(params_path):
         with open(params_path, 'r', encoding='utf-8') as file:
             my_params = json.load(file)
