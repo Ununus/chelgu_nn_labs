@@ -2,8 +2,11 @@
 import doc_processor as dproc
 from vocabulary import Vocabulary
 import word2vec as w2v
-from doc_embedding import DocumentsEmbeddingSumWord
+from doc_embedding import DocumentEmbeddingSumWord
+from doc_embedding import DocumentEmbeddingMtxWord
 import doc_classifier as dcl
+import doc_cnn_classifier as dcnncl
+import doc_classifier_train as dctrain
 
 import os
 import pickle
@@ -91,6 +94,7 @@ def main(my_params):
     word2vec_train_number_of_epochs = my_params['Word2vec train number of epochs']
     word2vec_train_batch_size = my_params['Word2vec train batch size']
     word2vec_train_learning_rate = my_params['Word2vec train learning rate']
+    classifier_type = my_params['Classifier type']
     classifier_hidden_layer_size = my_params['Classifier hidden layer size']
     classifier_train_number_of_epochs = my_params['Classifier train number of epochs']
     classifier_train_batch_size = my_params['Classifier train batch size']
@@ -131,33 +135,49 @@ def main(my_params):
     if info.load_classifier and os.path.exists(info.classifier_filename):
         doc_classifier_net = load_pretrained_classifier(info)
     else:
-        train_doc_embeds = DocumentsEmbeddingSumWord(dc_dataset.get_train(), vocab, word2vec)
-        word2vec = word2vec.cpu()
-        validation_doc_embeds = DocumentsEmbeddingSumWord(dc_dataset.get_validation(), vocab, word2vec)
-        test_doc_embeds = DocumentsEmbeddingSumWord(dc_dataset.get_test(), vocab, word2vec)
-        doc_classifier_train_dataset = dcl.Dataset(train_doc_embeds)
-        doc_classifier_validation_dataset = dcl.Dataset(validation_doc_embeds)
-        doc_classifier_test_dataset = dcl.Dataset(test_doc_embeds)
-        doc_classifier_create_info = dcl.DocClassifierCreateInfo()
-        doc_classifier_create_info.embedding_size = word2vec.embedding_size
-        doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
-        doc_classifier_create_info.num_classes = 2
-        doc_classifier_net = dcl.DocClassifier(doc_classifier_create_info)
-        doc_classifier_train_info = dcl.TrainInfo()
+        if classifier_type == 'simple':
+            train_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_train(), vocab, word2vec)
+            word2vec = word2vec.cpu()
+            validation_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_validation(), vocab, word2vec)
+            test_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_test(), vocab, word2vec)
+            doc_classifier_train_dataset = dctrain.Dataset(train_doc_embeds)
+            doc_classifier_validation_dataset = dctrain.Dataset(validation_doc_embeds)
+            doc_classifier_test_dataset = dctrain.Dataset(test_doc_embeds)
+            doc_classifier_create_info = dcl.DocClassifierCreateInfo()
+            doc_classifier_create_info.embedding_size = word2vec.embedding_size
+            doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
+            doc_classifier_create_info.num_classes = 2
+            doc_classifier_net = dcl.DocClassifier(doc_classifier_create_info)
+        elif classifier_type == 'cnn':
+            word2vec = word2vec.cpu()
+            train_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_train(), vocab, word2vec)
+            validation_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_validation(), vocab, word2vec)
+            test_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_test(), vocab, word2vec)
+            doc_classifier_train_dataset = dctrain.Dataset(train_doc_embeds)
+            doc_classifier_validation_dataset = dctrain.Dataset(validation_doc_embeds)
+            doc_classifier_test_dataset = dctrain.Dataset(test_doc_embeds)
+            doc_classifier_create_info = dcnncl.DocCnnClassifierCreateInfo()
+            doc_classifier_create_info.embedding_size = word2vec.embedding_size
+            doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
+            doc_classifier_create_info.num_classes = 2
+            doc_classifier_net = dcnncl.DocClassifier(doc_classifier_create_info)
+        doc_classifier_train_info = dctrain.TrainInfo()
         doc_classifier_train_info.n_epoch = classifier_train_number_of_epochs
         doc_classifier_train_info.batch_size = classifier_train_batch_size
         doc_classifier_train_info.learning_rate = classifier_train_learning_rate
         doc_classifier_train_info.shuffle = True
         doc_classifier_train_info.device = train_device
-        dcl.train_network(doc_classifier_net, doc_classifier_train_dataset, doc_classifier_validation_dataset, doc_classifier_train_info)
+        dctrain.train_network(doc_classifier_net, doc_classifier_train_dataset, doc_classifier_validation_dataset, doc_classifier_train_info)
+
         if info.save_classifier:
             save_pretrained_classifier(info, doc_classifier_net)
         print('Тест классификатора')
+        test_dataloader = torch.utils.data.DataLoader(doc_classifier_test_dataset, batch_size=1, shuffle=False)
         word2vec = word2vec.cpu()
         doc_classifier_net = doc_classifier_net.cpu()
         doc_classifier_net.eval()
         with torch.no_grad():
-            for idx, (doc_embed, group_ix) in enumerate(doc_classifier_test_dataset):
+            for idx, (doc_embed, group_ix) in enumerate(test_dataloader):
                 logits = doc_classifier_net(doc_embed)
                 pred = logits.argmax(dim=-1)
                 #print(' '.join(dc_dataset.get_test()[idx][0]))
@@ -188,9 +208,13 @@ def main(my_params):
                 custom_political.add_document(doc, 'Политические')
                 doc = file.readline().strip()
         custom_political.process()
-        custom_embeds = DocumentsEmbeddingSumWord(custom_political, vocab, word2vec)
+        if classifier_type == 'simple':
+            custom_embeds = DocumentEmbeddingSumWord(custom_political, vocab, word2vec)
+        elif classifier_type == 'cnn':
+            custom_embeds = DocumentEmbeddingMtxWord(custom_political, vocab, word2vec)
+        custim_dataloader = torch.utils.data.DataLoader(custom_embeds, batch_size=1, shuffle=False)
         with torch.no_grad():
-            for idx, doc_embed in enumerate(custom_embeds):
+            for idx, doc_embed in enumerate(custim_dataloader):
                 logits = doc_classifier_net(doc_embed)
                 pred = logits.argmax(dim=-1)
                 print('\033[0;33m', custom_political.raw_data[idx][0], '\033[0m', end=' ')
@@ -205,40 +229,44 @@ def main(my_params):
 if __name__ == '__main__':
     if os.path.abspath(os.curdir).endswith(word_to_vec_path):
         word_to_vec_path = '.'
+    my_params_def = {
+        'Load processed documents': True, 
+        'Save processed documents' : True,
+        'Processed documents filename': 'processed_documents.pickle',
+        'Load vocabulary': True, 
+        'Save vocabulary': True,
+        'Vocabulary filename': 'vocabulary.pickle',
+        'Load word2vec': True,
+        'Save word2vec': True,
+        'Word2vec filename': 'word2vec.pth',
+        'Load classifier': True,
+        'Save classifier': True,
+        'Classifier filename': 'classifier.pth',
+        'Train dataset size': 100000,
+        'Validation dataset size': 20000,
+        'Vocabulary word count threshold': 5,
+        'Train device': 'cuda',
+        'Word2vec kernel size': 2,
+        'Word2vec embedding size': 2000,
+        'Word2vec train number of epochs': 3,
+        'Word2vec train batch size': 2000,
+        'Word2vec train learning rate': 1e-3,
+        'Classifier type': 'simple', # simple, cnn
+        'Classifier hidden layer size': 200,
+        'Classifier train number of epochs': 100,
+        'Classifier train batch size': 2000,
+        'Classifier train learning rate': 0.01,
+        'Inference filename': 'custom_political.txt'
+        }
     params_path = os.path.join(os.curdir, word_to_vec_path, 'params.json')
     if os.path.exists(params_path):
         with open(params_path, 'r', encoding='utf-8') as file:
             my_params = json.load(file)
+        for key, val in my_params_def.items():
+            if key not in my_params:
+                my_params[key] = val
     else:
-        my_params = {
-            'Load processed documents': True, 
-            'Save processed documents' : True,
-            'Processed documents filename': 'processed_documents.pickle',
-            'Load vocabulary': True, 
-            'Save vocabulary': True,
-            'Vocabulary filename': 'vocabulary.pickle',
-            'Load word2vec': True,
-            'Save word2vec': True,
-            'Word2vec filename': 'word2vec.pth',
-            'Load classifier': True,
-            'Save classifier': True,
-            'Classifier filename': 'classifier.pth',
-            'Train dataset size': 100000,
-            'Validation dataset size': 20000,
-            'Vocabulary word count threshold': 5,
-            'Train device': 'cuda',
-            'Word2vec kernel size': 2,
-            'Word2vec embedding size': 2000,
-            'Word2vec train number of epochs': 3,
-            'Word2vec train batch size': 2000,
-            'Word2vec train learning rate': 1e-3,
-            'Classifier hidden layer size': 200,
-            'Classifier train number of epochs': 100,
-            'Classifier train batch size': 2000,
-            'Classifier train learning rate': 0.01,
-            'Inference filename': 'custom_political.txt'
-            }
-        
+        my_params = my_params_def
         with open(params_path, 'w', encoding='utf-8') as file:
             json.dump(my_params, file, indent=2)
     print(my_params)
