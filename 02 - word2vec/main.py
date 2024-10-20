@@ -6,6 +6,7 @@ from doc_embedding import DocumentEmbeddingSumWord
 from doc_embedding import DocumentEmbeddingMtxWord
 import doc_classifier as dcl
 import doc_cnn_classifier as dcnncl
+import doc_rnn_classifier as drnncl
 import doc_classifier_train as dctrain
 
 import os
@@ -135,14 +136,11 @@ def main(my_params):
     if info.load_classifier and os.path.exists(info.classifier_filename):
         doc_classifier_net = load_pretrained_classifier(info)
     else:
-        if classifier_type == 'simple':
+        if classifier_type == 'fc':
             train_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_train(), vocab, word2vec)
             word2vec = word2vec.cpu()
             validation_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_validation(), vocab, word2vec)
             test_doc_embeds = DocumentEmbeddingSumWord(dc_dataset.get_test(), vocab, word2vec)
-            doc_classifier_train_dataset = dctrain.Dataset(train_doc_embeds)
-            doc_classifier_validation_dataset = dctrain.Dataset(validation_doc_embeds)
-            doc_classifier_test_dataset = dctrain.Dataset(test_doc_embeds)
             doc_classifier_create_info = dcl.DocClassifierCreateInfo()
             doc_classifier_create_info.embedding_size = word2vec.embedding_size
             doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
@@ -153,14 +151,27 @@ def main(my_params):
             train_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_train(), vocab, word2vec)
             validation_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_validation(), vocab, word2vec)
             test_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_test(), vocab, word2vec)
-            doc_classifier_train_dataset = dctrain.Dataset(train_doc_embeds)
-            doc_classifier_validation_dataset = dctrain.Dataset(validation_doc_embeds)
-            doc_classifier_test_dataset = dctrain.Dataset(test_doc_embeds)
             doc_classifier_create_info = dcnncl.DocCnnClassifierCreateInfo()
             doc_classifier_create_info.embedding_size = word2vec.embedding_size
             doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
             doc_classifier_create_info.num_classes = 2
             doc_classifier_net = dcnncl.DocClassifier(doc_classifier_create_info)
+        elif classifier_type == 'rnn':
+            word2vec = word2vec.cpu()
+            train_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_train(), vocab, word2vec)
+            validation_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_validation(), vocab, word2vec)
+            test_doc_embeds = DocumentEmbeddingMtxWord(dc_dataset.get_test(), vocab, word2vec)
+            doc_classifier_create_info = drnncl.DocRnnClassifierCreateInfo()
+            doc_classifier_create_info.embedding_size = word2vec.embedding_size
+            doc_classifier_create_info.hidden_layer_size = classifier_hidden_layer_size
+            doc_classifier_create_info.num_classes = 2
+            doc_classifier_create_info.rnn_type = 'gru'
+            doc_classifier_net = drnncl.DocRnnClassifier(doc_classifier_create_info)
+        else:
+            raise ValueError('Unknown classificator type: {}'.format(classifier_type))
+        doc_classifier_train_dataset = dctrain.Dataset(train_doc_embeds)
+        doc_classifier_validation_dataset = dctrain.Dataset(validation_doc_embeds)
+        doc_classifier_test_dataset = dctrain.Dataset(test_doc_embeds)
         doc_classifier_train_info = dctrain.TrainInfo()
         doc_classifier_train_info.n_epoch = classifier_train_number_of_epochs
         doc_classifier_train_info.batch_size = classifier_train_batch_size
@@ -208,9 +219,9 @@ def main(my_params):
                 custom_political.add_document(doc, 'Политические')
                 doc = file.readline().strip()
         custom_political.process()
-        if classifier_type == 'simple':
+        if classifier_type == 'fc':
             custom_embeds = DocumentEmbeddingSumWord(custom_political, vocab, word2vec)
-        elif classifier_type == 'cnn':
+        elif classifier_type == 'cnn' or classifier_type == 'rnn':
             custom_embeds = DocumentEmbeddingMtxWord(custom_political, vocab, word2vec)
         custim_dataloader = torch.utils.data.DataLoader(custom_embeds, batch_size=1, shuffle=False)
         with torch.no_grad():
@@ -251,7 +262,7 @@ if __name__ == '__main__':
         'Word2vec train number of epochs': 3,
         'Word2vec train batch size': 2000,
         'Word2vec train learning rate': 1e-3,
-        'Classifier type': 'simple', # simple, cnn
+        'Classifier type': 'fc', # fc, cnn, rnn
         'Classifier hidden layer size': 200,
         'Classifier train number of epochs': 100,
         'Classifier train batch size': 2000,
